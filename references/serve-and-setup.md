@@ -1,0 +1,266 @@
+# Serve & Setup (Phase 2 of `init` pipeline + `/repo-doc serve` command)
+
+Covers: MkDocs local server, PR template generation, pre-commit hook setup,
+and `mkdocs.yml` generation.
+
+**Important:** During `/repo-doc init`, the `mkdocs.yml` generation (§2.1 below)
+is called early in Phase 2 of the pipeline — before file scanning begins. This
+ensures the site scaffold exists even if later phases are interrupted. The
+`/repo-doc serve` command itself (§S.1 + §S.2) is only for the standalone serve command.
+
+---
+
+## `/repo-doc serve` — Standalone Serve Command
+
+### S.1 — Check dependencies
+
+```bash
+pip show mkdocs mkdocs-material mkdocs-mermaid2-plugin mkdocs-awesome-pages-plugin mkdocs-panzoom-plugin 2>/dev/null
+```
+
+If any are missing, show the exact install command and ask before proceeding:
+
+```
+Some MkDocs packages are missing. To install them:
+
+  pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin mkdocs-awesome-pages-plugin mkdocs-panzoom-plugin
+
+Want me to run this now? (y/n)
+```
+
+If the engineer says yes, run the pip install. If no, stop — they may prefer
+a different package manager (pipx, poetry, conda, etc.) or virtual environment.
+
+If `pip` is not available, also suggest:
+```
+If you use pipx:   pipx install mkdocs && pipx inject mkdocs mkdocs-material mkdocs-mermaid2-plugin mkdocs-awesome-pages-plugin mkdocs-panzoom-plugin
+If you use poetry:  poetry add --group dev mkdocs mkdocs-material mkdocs-mermaid2-plugin mkdocs-awesome-pages-plugin mkdocs-panzoom-plugin
+```
+
+### 2.1 — Generate or update mkdocs.yml
+
+If `mkdocs.yml` doesn't exist, generate it. If it exists, check that it has the
+required plugins and extensions — warn if missing but do not overwrite.
+
+```yaml
+site_name: "<service.name from repodoc.yaml>"
+site_url: "http://localhost:8000/"
+
+theme:
+  name: material
+  icon:
+    logo: material/shield-account
+  features:
+    - navigation.expand
+    - navigation.top
+    - navigation.path
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mermaid2
+  - awesome-pages
+  - panzoom:
+      key: "none"
+      always_show_hint: true
+      hint_location: "top"
+      full_screen: true
+
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - admonition
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.mark
+  - pymdownx.critic
+  - pymdownx.keys
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+
+# docs_dir: <docs_site.output_dir from repodoc.yaml>
+# ↑ Only include docs_dir if output_dir is NOT the default "docs/"
+
+nav:
+  - Home: index.md
+  - Onboarding: onboarding.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Data Flow: architecture/data-flow.md
+      - Sequence Diagrams: architecture/sequence-diagrams.md
+      - Entity Model: architecture/entity-model.md
+  - API:
+      - Endpoints: api/endpoints.md
+      - Events: api/events.md
+  - Security:
+      - Authentication: security/auth.md
+      - Data Privacy: security/data-privacy.md
+  - Integrations:
+      - Overview: integrations/overview.md
+  - Data:
+      - Models: data/models.md
+      - Storage: data/storage.md
+  - Infrastructure:
+      - Deployment: infrastructure/deployment.md
+      - Configuration: infrastructure/configuration.md
+      - Local Setup: infrastructure/local-setup.md
+  - Runbook:
+      - Failure Modes: runbook/index.md
+      - Alerts: runbook/alerts.md
+      - Known Issues: runbook/known-issues.md
+  - Features: features/
+  - Deprecations: deprecations.md
+  - Glossary: glossary.md
+  - Coverage: coverage.md
+  - Changelog: changelog/index.md
+```
+
+**`docs_dir` note:** Only include `docs_dir` if `docs_site.output_dir` in `repodoc.yaml` is
+not the default `docs/`. MkDocs defaults to `docs/`, so only override when the user chose
+a custom directory (e.g. `docs-gen/`).
+
+For monorepos: add a top-level tabs navigation with one tab per service, each
+containing the full nav tree above under `docs/<service-name>/`.
+
+### 2.1.1 — Update .gitignore for MkDocs build artifacts
+
+After generating `mkdocs.yml`, ensure `.gitignore` includes these MkDocs-specific entries:
+
+```
+# MkDocs build output
+site/
+.cache/
+```
+
+- `site/` is the MkDocs build output directory (generated by `mkdocs build`). It contains
+  hundreds of compiled HTML files that must never be committed.
+- `.cache/` is used by MkDocs plugins (e.g. mermaid2, panzoom) for build caching.
+
+Check if these entries already exist before adding. Append to the end of `.gitignore` if missing.
+
+**This is separate from the repodoc-specific `.gitignore` entries** (`repodoc-audit-report.md`,
+`.repodoc-backup/`) handled in `config-wizard.md` §1.9.
+
+### S.2 — Serve
+
+```bash
+mkdocs serve --dev-addr 127.0.0.1:8000
+```
+
+Tell the engineer: `Docs available at http://localhost:8000`
+
+### 2.2 — Makefile target
+
+If a `Makefile` already exists in the repo, add these targets (if not present):
+
+```makefile
+docs:
+	mkdocs serve --dev-addr 127.0.0.1:8000
+
+docs-build:
+	mkdocs build --strict
+```
+
+If no `Makefile` exists and no other build tool is present, create one with these
+targets. If another build tool exists (package.json, build.gradle, etc.), add
+equivalent commands to that build tool instead.
+
+---
+
+## 2.3 — PR Template
+
+If `pr_template.enabled: true` in `repodoc.yaml`:
+
+Create `.github/PULL_REQUEST_TEMPLATE.md` (create `.github/` directory if needed):
+
+```markdown
+## Summary
+<!-- What does this PR do and why? Jira ticket: [PROJ-XXXX] -->
+
+## Changes
+<!-- List key changes -->
+
+## Documentation Checklist
+- [ ] Ran `/repo-doc audit` — no breaking or notable drift detected
+- [ ] New endpoints added to `docs/api/endpoints.md`
+- [ ] New env vars added to `docs/infrastructure/configuration.md`
+- [ ] New integrations added to `docs/integrations/`
+- [ ] Sequence diagrams updated if a flow changed
+- [ ] New deprecations added to `docs/deprecations.md`
+- [ ] Runbook updated if failure modes changed
+
+## Testing
+- [ ] Unit tests pass
+- [ ] Integration tests pass
+- [ ] Tested locally
+```
+
+If the file already exists: do not overwrite. Instead, inform the engineer:
+```
+.github/PULL_REQUEST_TEMPLATE.md already exists.
+Consider adding repo-doc's documentation checklist to it manually.
+Here's the checklist to add:
+
+[show the Documentation Checklist section]
+```
+
+---
+
+## 2.4 — Pre-commit Hook
+
+If `audit.on_commit: true` in `repodoc.yaml`:
+
+Generate `.pre-commit-config.yaml` (or append to it if it exists):
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: repo-doc-audit
+        name: Repo Doc — Documentation Audit
+        entry: bash -c 'echo "[repo-doc] Run /repo-doc audit with your AI coding agent before committing."'
+        language: system
+        pass_filenames: false
+        stages: [commit]
+```
+
+After generating, inform the engineer:
+```
+Pre-commit hook configured. Install the pre-commit framework if not already installed:
+  pip install pre-commit && pre-commit install
+```
+
+If `.pre-commit-config.yaml` already exists: append the repo-doc hook to the
+existing `repos:` list. Do not overwrite existing hooks.
